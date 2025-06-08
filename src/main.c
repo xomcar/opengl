@@ -1,8 +1,8 @@
+#include "image.h"
 #include "shaders.h"
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
 #include <assert.h>
-#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -10,8 +10,9 @@ typedef enum Color { STILL, GRADIENT } ShaderColor;
 typedef enum Shape { TRI, RECT } Shape;
 
 static enum Color color = STILL;
-static enum Shape shape = TRI;
+static enum Shape shape = RECT;
 static GLenum mode = GL_FILL;
+static float texture_mix = 0.2;
 
 void frameBufferSizeCallback(GLFWwindow *window, int width, int height) { glViewport(0, 0, width, height); }
 
@@ -34,9 +35,27 @@ void processInput(GLFWwindow *window) {
     shape = (shape == TRI) ? RECT : TRI;
   }
 
+  static bool upKeyWasPressed = false;
+  if ((glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) && !upKeyWasPressed) {
+    texture_mix += 0.1f;
+    if (texture_mix > 1.0f) {
+      texture_mix = 1.0f;
+    }
+  }
+
+  static bool downKeyWasPressed = false;
+  if ((glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) && !downKeyWasPressed) {
+    texture_mix -= 0.1f;
+    if (texture_mix < 0.0f) {
+      texture_mix = 0.0f;
+    }
+  }
+
   wKeyWasPressed = (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) ? true : false;
   cKeyWasPressed = (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) ? true : false;
   sKeyWasPressed = (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) ? true : false;
+  upKeyWasPressed = (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) ? true : false;
+  downKeyWasPressed = (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) ? true : false;
 }
 
 int main() {
@@ -55,11 +74,12 @@ int main() {
   glViewport(0, 0, 800, 600);
   glfwSetFramebufferSizeCallback(window, frameBufferSizeCallback);
 
-  GLfloat rectangle_vp[] = {
-      0.5f,  0.5f,  0.0f, // top right
-      0.5f,  -0.5f, 0.0f, // bottom right
-      -0.5f, -0.5f, 0.0f, // bottom left
-      -0.5f, 0.5f,  .0f   // top left
+  float rectangle_vp[] = {
+      // positions          // colors           // texture coords
+      0.5f,  0.5f,  0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, // top right
+      0.5f,  -0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, // bottom right
+      -0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, // bottom left
+      -0.5f, 0.5f,  0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f  // top left
   };
 
   GLfloat triangle_vp[] = {
@@ -73,13 +93,15 @@ int main() {
 
   GLuint fShader;
   ShaderLoadResult res;
-  res = ShaderLoadFromDisk("src/shaders/fixed.vertex.glsl", "src/shaders/fixed.fragment.glsl", &fShader);
+  res = ShaderLoadFromDisk("shaders/fixed.vertex.glsl", "shaders/fixed.fragment.glsl", &fShader);
   assert(res == SUCCESS && "Failed to compile fixed shader");
-  GLuint bShader;
-  res = ShaderLoadFromDisk("src/shaders/breathing.vertex.glsl", "src/shaders/breathing.fragment.glsl", &bShader);
-  assert(res == SUCCESS && "Failed to compile breathing shader");
+  GLuint tShader;
+  res = ShaderLoadFromDisk("shaders/texture.vertex.glsl", "shaders/texture.fragment.glsl", &tShader);
+  assert(res == SUCCESS && "Failed to compile texture shader");
 
-  GLint vertexColorLocation = glGetUniformLocation(bShader, "extColor");
+  GLint tex0Location = glGetUniformLocation(tShader, "texture0");
+  GLint tex1Location = glGetUniformLocation(tShader, "texture1");
+  GLint mixAmountLocation = glGetUniformLocation(tShader, "mixAmount");
 
   GLuint VBO_rect;
   GLuint VBO_tria;
@@ -97,12 +119,45 @@ int main() {
   glBindBuffer(GL_ARRAY_BUFFER, VBO_rect);
   glBufferData(GL_ARRAY_BUFFER, sizeof(rectangle_vp), rectangle_vp, GL_STATIC_DRAW);
 
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0);
-  glEnableVertexAttribArray(0); // select defined vertex array to parse the VBO buffer
-
   // An EBO stores indices of what vertices (contained in a VBO) to draw (indexed drawing)
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO_rect);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), 0);
+  glEnableVertexAttribArray(0); // select defined vertex array to parse the VBO buffer
+
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(3 * sizeof(float)));
+  glEnableVertexAttribArray(1);
+
+  glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(6 * sizeof(float)));
+  glEnableVertexAttribArray(2);
+
+  // Load textures
+  int width, height, nrChannels;
+
+  GLuint texture0;
+  glGenTextures(1, &texture0);
+  glBindTexture(GL_TEXTURE_2D, texture0);
+
+  // stbi_set_flip_vertically_on_load(true);
+  unsigned char *wood = stbi_load("data/container.jpg", &width, &height, &nrChannels, 0);
+  assert(wood != NULL && "Failed to load wood texture");
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, wood);
+  glGenerateMipmap(GL_TEXTURE_2D);
+
+  stbi_image_free(wood);
+
+  GLuint texture1;
+  glGenTextures(1, &texture1);
+  glBindTexture(GL_TEXTURE_2D, texture1);
+
+  unsigned char *face = stbi_load("data/awesomeface.png", &width, &height, &nrChannels, 0);
+  assert(face != NULL && "Failed to load face texture");
+
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, face);
+  glGenerateMipmap(GL_TEXTURE_2D);
+
+  stbi_image_free(face);
 
   // Configure triangle VAO
   glBindVertexArray(VAO_tri);
@@ -126,20 +181,19 @@ int main() {
 
     glPolygonMode(GL_FRONT_AND_BACK, mode);
 
-    if (color == GRADIENT) {
-      float timeValue = glfwGetTime();
-      float greenValue = (sin(timeValue) / 2.0f) + 0.5f;
-      glUniform4f(vertexColorLocation, 0.0f, greenValue, 0.0f, 1.0f);
-    } else {
-      glUniform4f(vertexColorLocation, 0.7f, 0.3, 0.1f, 1.0f);
-    }
-
     if (shape == TRI) {
       glUseProgram(fShader);
       glBindVertexArray(VAO_tri);
       glDrawArrays(GL_TRIANGLES, 0, 3);
     } else {
-      glUseProgram(bShader);
+      glUniform1i(tex0Location, 0);
+      glUniform1i(tex1Location, 1);
+      glUniform1f(mixAmountLocation, texture_mix);
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D, texture0);
+      glActiveTexture(GL_TEXTURE1);
+      glBindTexture(GL_TEXTURE_2D, texture1);
+      glUseProgram(tShader);
       glBindVertexArray(VAO_rect);
       glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
     }

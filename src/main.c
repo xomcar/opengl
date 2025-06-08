@@ -1,13 +1,15 @@
-#define GL_GLEXT_PROTOTYPES
+#include "shaders.h"
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
+#include <assert.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 
-typedef enum Color { ORANGE, PINK } ShaderColor;
+typedef enum Color { STILL, GRADIENT } ShaderColor;
 typedef enum Shape { TRI, RECT } Shape;
 
-static enum Color color = ORANGE;
+static enum Color color = STILL;
 static enum Shape shape = TRI;
 static GLenum mode = GL_FILL;
 
@@ -24,7 +26,7 @@ void processInput(GLFWwindow *window) {
 
   static bool cKeyWasPressed = false;
   if ((glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) && !cKeyWasPressed) {
-    color = (color == ORANGE) ? PINK : ORANGE;
+    color = (color == STILL) ? GRADIENT : STILL;
   }
 
   static bool sKeyWasPressed = false;
@@ -60,68 +62,30 @@ int main() {
       -0.5f, 0.5f,  .0f   // top left
   };
 
-  GLfloat triangle_vp[] = {-0.5f, -0.5f, 0.0f, 0.5f, -0.5f, 0.0f, 0.0f, 0.5f, 0.0f};
+  GLfloat triangle_vp[] = {
+      // positions         // colors
+      0.5f,  -0.5f, 0.0f, 1.0f, 0.0f, 0.0f, // bottom right
+      -0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f, // bottom left
+      0.0f,  0.5f,  0.0f, 0.0f, 0.0f, 1.0f  // top
+  };
 
   GLuint indices[] = {0, 1, 3, 1, 2, 3};
 
-  const char *vertexShaderSource = "#version 330 core\n"
-                                   "layout (location = 0) in vec3 aPos;\n"
-                                   "void main()\n"
-                                   "{\n"
-                                   "   gl_Position = vec4(aPos, 1.0);\n"
-                                   "}\0";
+  GLuint fShader;
+  ShaderLoadResult res;
+  res = ShaderLoadFromDisk("src/shaders/fixed.vertex.glsl", "src/shaders/fixed.fragment.glsl", &fShader);
+  assert(res == SUCCESS && "Failed to compile fixed shader");
+  GLuint bShader;
+  res = ShaderLoadFromDisk("src/shaders/breathing.vertex.glsl", "src/shaders/breathing.fragment.glsl", &bShader);
+  assert(res == SUCCESS && "Failed to compile breathing shader");
 
-  const char *fragmentShaderSources[] = {"#version 330 core\n"
-                                         "out vec4 FragColor;\n"
-                                         "void main()\n"
-                                         "{\n "
-                                         "    FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);\n"
-                                         "}\0",
-                                         "#version 330 core\n"
-                                         "out vec4 FragColor;\n"
-                                         "void main()\n"
-                                         "{\n "
-                                         "    FragColor = vec4(1.0f, 0.5f, 0.7f, 1.0f);\n"
-                                         "}\0"};
+  GLint vertexColorLocation = glGetUniformLocation(bShader, "extColor");
 
-  unsigned int vertexShader;
-  vertexShader = glCreateShader(GL_VERTEX_SHADER);
-  glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-
-  glCompileShader(vertexShader);
-
-  unsigned int orangeFragShader;
-  orangeFragShader = glCreateShader(GL_FRAGMENT_SHADER);
-  glShaderSource(orangeFragShader, 1, &fragmentShaderSources[0], NULL);
-
-  unsigned int pinkFragShader;
-  pinkFragShader = glCreateShader(GL_FRAGMENT_SHADER);
-  glShaderSource(pinkFragShader, 1, &fragmentShaderSources[1], NULL);
-
-  glCompileShader(orangeFragShader);
-  glCompileShader(pinkFragShader);
-
-  unsigned int orangeShaderProgram;
-  orangeShaderProgram = glCreateProgram();
-  glAttachShader(orangeShaderProgram, vertexShader);
-  glAttachShader(orangeShaderProgram, orangeFragShader);
-  glLinkProgram(orangeShaderProgram);
-
-  unsigned int pinkShaderProgram;
-  pinkShaderProgram = glCreateProgram();
-  glAttachShader(pinkShaderProgram, vertexShader);
-  glAttachShader(pinkShaderProgram, pinkFragShader);
-  glLinkProgram(pinkShaderProgram);
-
-  glDeleteShader(vertexShader);
-  glDeleteShader(orangeFragShader);
-  glDeleteShader(pinkFragShader);
-
-  unsigned int VBO_rect;
-  unsigned int VBO_tria;
-  unsigned int EBO_rect;
-  unsigned int VAO_rect;
-  unsigned int VAO_tri;
+  GLuint VBO_rect;
+  GLuint VBO_tria;
+  GLuint EBO_rect;
+  GLuint VAO_rect;
+  GLuint VAO_tri;
   glGenBuffers(1, &VBO_rect);
   glGenBuffers(1, &VBO_tria);
   glGenBuffers(1, &EBO_rect);
@@ -132,22 +96,27 @@ int main() {
   glBindVertexArray(VAO_rect); // vertex array must be bound before buffers! attributes are linked to a buffer
   glBindBuffer(GL_ARRAY_BUFFER, VBO_rect);
   glBufferData(GL_ARRAY_BUFFER, sizeof(rectangle_vp), rectangle_vp, GL_STATIC_DRAW);
+
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0);
+  glEnableVertexAttribArray(0); // select defined vertex array to parse the VBO buffer
 
   // An EBO stores indices of what vertices (contained in a VBO) to draw (indexed drawing)
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO_rect);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-  glEnableVertexAttribArray(0); // select defined vertex array to parse the VBO buffer
 
   // Configure triangle VAO
   glBindVertexArray(VAO_tri);
 
   glBindBuffer(GL_ARRAY_BUFFER, VBO_tria);
   glBufferData(GL_ARRAY_BUFFER, sizeof(triangle_vp), triangle_vp, GL_STATIC_DRAW);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0);
 
-  glEnableVertexAttribArray(0); // select defined vertex array to parse the VBO buffer
+  // position
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), 0);
+  glEnableVertexAttribArray(0);
+
+  // color
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(3 * sizeof(float)));
+  glEnableVertexAttribArray(1);
 
   glBindVertexArray(0); // reset bound vao
 
@@ -157,17 +126,20 @@ int main() {
 
     glPolygonMode(GL_FRONT_AND_BACK, mode);
 
-    if (color == PINK) {
-      glUseProgram(pinkShaderProgram);
-
+    if (color == GRADIENT) {
+      float timeValue = glfwGetTime();
+      float greenValue = (sin(timeValue) / 2.0f) + 0.5f;
+      glUniform4f(vertexColorLocation, 0.0f, greenValue, 0.0f, 1.0f);
     } else {
-      glUseProgram(orangeShaderProgram);
+      glUniform4f(vertexColorLocation, 0.7f, 0.3, 0.1f, 1.0f);
     }
 
     if (shape == TRI) {
+      glUseProgram(fShader);
       glBindVertexArray(VAO_tri);
       glDrawArrays(GL_TRIANGLES, 0, 3);
     } else {
+      glUseProgram(bShader);
       glBindVertexArray(VAO_rect);
       glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
     }

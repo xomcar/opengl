@@ -13,4 +13,6 @@ file(GLOB SOURCES "src/*.c")
 
 add_executable(main ${SOURCES})
 
-target_link_libraries(main glfw OpenGL::GL)
+target_link_libraries(main m glfw OpenGL::GL)
+target_include_directories(main PRIVATE "include")
+target_compile_definitions(main PRIVATE GL_GLEXT_PROTOTYPES)
